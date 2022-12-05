@@ -37,6 +37,8 @@ spec:
                 - required:
                   - iceberg
                 - required:
+                  - phoenix
+                - required:
                   - tpcds
                 - required:
                   - tpch
@@ -313,6 +315,30 @@ spec:
                         type: object
                     required:
                     - metastore
+                    type: object
+                  phoenix:
+                    properties:
+                      hbase:
+                        description: Connection to an HBase cluster
+                        properties:
+                          configMap:
+                            description: Name of the discovery-configmap providing information about the Hbase cluster
+                            type: string
+                        required:
+                        - configMap
+                        type: object
+                      zookeeper:
+                        description: Connection to an Zookeeper cluster
+                        properties:
+                          configMap:
+                            description: Name of the discovery-configmap providing information about the Zookeeper Znode
+                            type: string
+                        required:
+                        - configMap
+                        type: object
+                    required:
+                    - hbase
+                    - zookeeper
                     type: object
                   tpcds:
                     type: object

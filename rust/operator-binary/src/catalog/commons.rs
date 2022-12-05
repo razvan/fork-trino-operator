@@ -9,7 +9,7 @@ use stackable_operator::{
     commons::tls::{CaCert, TlsServerVerification, TlsVerification},
     k8s_openapi::api::core::v1::ConfigMap,
 };
-use stackable_trino_crd::catalog::commons::{HdfsConnection, MetastoreConnection};
+use stackable_trino_crd::catalog::commons::{HbaseConnection, HdfsConnection, MetastoreConnection};
 use stackable_trino_crd::{
     CONFIG_DIR_NAME, S3_SECRET_DIR_NAME, STACKABLE_CLIENT_TLS_DIR, STACKABLE_MOUNT_CLIENT_TLS_DIR,
 };
@@ -182,6 +182,35 @@ impl ExtendCatalogConfig for HdfsConnection {
         catalog_config
             .volume_mounts
             .push(VolumeMountBuilder::new(&volume_name, &hdfs_site_dir).build());
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ExtendCatalogConfig for HbaseConnection {
+    async fn extend_catalog_config(
+        &self,
+        catalog_config: &mut CatalogConfig,
+        catalog_name: &str,
+        _catalog_namespace: Option<String>,
+        _client: &Client,
+    ) -> Result<(), FromTrinoCatalogError> {
+        let hbase_site_dir = format!("{CONFIG_DIR_NAME}/catalog/{catalog_name}/hbase-config");
+        catalog_config.add_property(
+            "phoenix.config.resources",
+            format!("{hbase_site_dir}/hbase-site.xml"),
+        );
+
+        let volume_name = format!("{catalog_name}-hbase");
+        catalog_config.volumes.push(
+            VolumeBuilder::new(&volume_name)
+                .with_config_map(&self.config_map)
+                .build(),
+        );
+        catalog_config
+            .volume_mounts
+            .push(VolumeMountBuilder::new(&volume_name, &hbase_site_dir).build());
 
         Ok(())
     }

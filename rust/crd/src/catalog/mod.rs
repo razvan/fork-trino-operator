@@ -3,6 +3,7 @@ pub mod commons;
 pub mod google_sheet;
 pub mod hive;
 pub mod iceberg;
+pub mod phoenix;
 pub mod tpcds;
 pub mod tpch;
 
@@ -19,6 +20,8 @@ use hive::HiveConnector;
 use iceberg::IcebergConnector;
 use tpcds::TpcdsConnector;
 use tpch::TpchConnector;
+
+use self::phoenix::PhoenixConnector;
 
 #[derive(Clone, CustomResource, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[kube(
@@ -47,6 +50,7 @@ pub enum TrinoCatalogConnector {
     GoogleSheet(GoogleSheetConnector),
     Hive(HiveConnector),
     Iceberg(IcebergConnector),
+    Phoenix(PhoenixConnector),
     Tpcds(TpcdsConnector),
     Tpch(TpchConnector),
 }

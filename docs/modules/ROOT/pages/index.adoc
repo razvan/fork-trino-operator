@@ -1,0 +1,3 @@
+= Stackable Operator for Trino
+
+The docs can now be found at: xref:home:trino:index.adoc[]

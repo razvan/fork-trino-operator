@@ -8,6 +8,7 @@ spec:
     productVersion: "396"
     stackableVersion: "23.4.0-rc2"
   clusterConfig:
+    listenerClass: external-unstable
     authentication:
       method:
         multiUser:
@@ -41,18 +42,18 @@ stringData:
   alice: $2y$10$HcCa4k9v2DRrD/g7e5vEz.Bk.1xg00YTEHOZjPX7oK3KqMSt2xT8W
   # bob:bob
   bob: $2y$10$xVRXtYZnYuQu66SmruijPO8WHFM/UK5QPHTr.Nzf4JMcZSqt3W.2.
----
-apiVersion: opa.stackable.tech/v1alpha1
-kind: OpaCluster
-metadata:
-  name: simple-opa
-spec:
-  image:
-    productVersion: 0.45.0
-    stackableVersion: "23.4.0-rc1"
-  servers:
-    roleGroups:
-      default: {}
+# ---
+# apiVersion: opa.stackable.tech/v1alpha1
+# kind: OpaCluster
+# metadata:
+#   name: simple-opa
+# spec:
+#   image:
+#     productVersion: 0.45.0
+#     stackableVersion: "23.4.0-rc1"
+#   servers:
+#     roleGroups:
+#       default: {}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -65,6 +66,7 @@ data:
     package trino
 
     import future.keywords.in
+    import future.keywords.contains
 
     default allow = false
 
@@ -73,19 +75,23 @@ data:
     }
 
     allow {
-      is_bob
-      can_be_accessed_by_bob
+      is_user
+      can_be_accessed_by_user
     }
 
     is_admin() {
-      input.context.identity.user == "admin"
+      some role
+      userInfo := data.test.userInfo(input.context.identity.user)
+      userInfo.roles[role].name == "trino-admin"
     }
 
-    is_bob() {
-      input.context.identity.user == "bob"
+    is_user() {
+      some role
+      userInfo := data.test.userInfo(input.context.identity.user)
+      userInfo.roles[role].name == "trino"
     }
 
-    can_be_accessed_by_bob() {
+    can_be_accessed_by_user() {
       input.action.operation in ["ImpersonateUser", "FilterCatalogs", "AccessCatalog", "ExecuteQuery"]
     }
 ---

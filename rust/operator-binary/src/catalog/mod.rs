@@ -11,17 +11,15 @@ pub mod tpch;
 use self::config::CatalogConfig;
 use async_trait::async_trait;
 use snafu::Snafu;
-use stackable_operator::client::Client;
+use stackable_operator::{client::Client, commons::s3::S3Error};
 
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 pub enum FromTrinoCatalogError {
     #[snafu(display("object defines no namespace"))]
     ObjectHasNoNamespace,
-    #[snafu(display("failed to resolve S3ConnectionDef"))]
-    ResolveS3ConnectionDef {
-        source: stackable_operator::error::Error,
-    },
+    #[snafu(display("failed to configure S3 connection"))]
+    ConfigureS3 { source: S3Error },
     #[snafu(display("trino does not support disabling the TLS verification of S3 servers"))]
     S3TlsNoVerificationNotSupported,
     #[snafu(display("trino catalog has no name set"))]

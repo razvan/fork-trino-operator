@@ -14400,14 +14400,13 @@ spec:
                                 - reference
                           properties:
                             inline:
-                              description: S3 connection definition as CRD.
                               properties:
                                 accessStyle:
+                                  default: VirtualHosted
                                   description: Which access style to use. Defaults to virtual hosted-style as most of the data products out there. Have a look at the official documentation on <https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html>
                                   enum:
                                     - Path
                                     - VirtualHosted
-                                  nullable: true
                                   type: string
                                 credentials:
                                   description: If the S3 uses authentication you have to specify you S3 credentials. In the most cases a SecretClass providing `accessKey` and `secretKey` is sufficient.
@@ -14436,17 +14435,16 @@ spec:
                                     - secretClass
                                   type: object
                                 host:
-                                  description: Hostname of the S3 server without any protocol or port
-                                  nullable: true
+                                  description: Hostname of the S3 server without any protocol or port.
                                   type: string
                                 port:
-                                  description: Port the S3 server listens on. If not specified the products will determine the port to use.
+                                  description: Port the S3 server listens on. Port of the S3 server. If TLS is used defaults to 443 otherwise to 80.
                                   format: uint16
                                   minimum: 0.0
                                   nullable: true
                                   type: integer
                                 tls:
-                                  description: If you want to use TLS when talking to S3 you can enable TLS encrypted communication with this setting.
+                                  description: Use a TLS connection. If not specified no TLS will be used
                                   nullable: true
                                   properties:
                                     verification:
@@ -14485,6 +14483,8 @@ spec:
                                   required:
                                     - verification
                                   type: object
+                              required:
+                                - host
                               type: object
                             reference:
                               type: string
@@ -14523,14 +14523,13 @@ spec:
                                 - reference
                           properties:
                             inline:
-                              description: S3 connection definition as CRD.
                               properties:
                                 accessStyle:
+                                  default: VirtualHosted
                                   description: Which access style to use. Defaults to virtual hosted-style as most of the data products out there. Have a look at the official documentation on <https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html>
                                   enum:
                                     - Path
                                     - VirtualHosted
-                                  nullable: true
                                   type: string
                                 credentials:
                                   description: If the S3 uses authentication you have to specify you S3 credentials. In the most cases a SecretClass providing `accessKey` and `secretKey` is sufficient.
@@ -14559,17 +14558,16 @@ spec:
                                     - secretClass
                                   type: object
                                 host:
-                                  description: Hostname of the S3 server without any protocol or port
-                                  nullable: true
+                                  description: Hostname of the S3 server without any protocol or port.
                                   type: string
                                 port:
-                                  description: Port the S3 server listens on. If not specified the products will determine the port to use.
+                                  description: Port the S3 server listens on. Port of the S3 server. If TLS is used defaults to 443 otherwise to 80.
                                   format: uint16
                                   minimum: 0.0
                                   nullable: true
                                   type: integer
                                 tls:
-                                  description: If you want to use TLS when talking to S3 you can enable TLS encrypted communication with this setting.
+                                  description: Use a TLS connection. If not specified no TLS will be used
                                   nullable: true
                                   properties:
                                     verification:
@@ -14608,6 +14606,8 @@ spec:
                                   required:
                                     - verification
                                   type: object
+                              required:
+                                - host
                               type: object
                             reference:
                               type: string

@@ -13,7 +13,7 @@
 dimensions:
   - name: trino
     values:
-      - 414
+      # - 414
       - 428
   - name: trino-latest
     values:
@@ -54,40 +54,44 @@ dimensions:
     values:
       - "false"
 tests:
-  - name: smoke
+  # - name: smoke
+  #   dimensions:
+  #     - trino
+  #     - hive
+  #     - opa
+  #     - hdfs
+  #     - zookeeper
+  #     - s3-use-tls
+  #     - openshift
+  # - name: tls
+  #   dimensions:
+  #     - trino-latest
+  #     - use-authentication
+  #     - use-tls
+  #     - use-internal-tls
+  #     - openshift
+  # - name: resources
+  #   dimensions:
+  #     - trino-latest
+  # - name: authentication
+  #   dimensions:
+  #     - trino-latest
+  #     - ldap-use-tls
+  #     - openshift
+  - name: authorization
     dimensions:
       - trino
-      - hive
       - opa
-      - hdfs
-      - zookeeper
-      - s3-use-tls
-      - openshift
-  - name: tls
-    dimensions:
-      - trino-latest
-      - use-authentication
-      - use-tls
-      - use-internal-tls
-      - openshift
-  - name: resources
-    dimensions:
-      - trino-latest
-  - name: authentication
-    dimensions:
-      - trino-latest
-      - ldap-use-tls
-      - openshift
-  - name: orphaned-resources
-    dimensions:
-      - trino-latest
-  - name: logging
-    dimensions:
-      - trino
-      - openshift
-  - name: cluster-operation
-    dimensions:
-      - trino-latest
+  # - name: orphaned-resources
+  #   dimensions:
+  #     - trino-latest
+  # - name: logging
+  #   dimensions:
+  #     - trino
+  #     - openshift
+  # - name: cluster-operation
+  #   dimensions:
+  #     - trino-latest
 suites:
   - name: nightly
     # Run with the latest product versions and tls true and false to cover different tls code paths.

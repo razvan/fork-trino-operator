@@ -1,13 +1,13 @@
 //! Ensures that `Pod`s are configured and running for each [`TrinoCluster`]
 use std::{
     collections::{BTreeMap, HashMap},
+    convert::Infallible,
     fmt::Write,
     ops::Div,
     str::FromStr,
     sync::Arc,
 };
 
-use indoc::formatdoc;
 use product_config::{
     self,
     types::PropertyNameKind,
@@ -40,7 +40,8 @@ use stackable_operator::{
         runtime::{controller::Action, reflector::ObjectRef},
         Resource, ResourceExt,
     },
-    labels::{role_group_selector_labels, role_selector_labels, ObjectLabels},
+    kvp::ObjectLabels,
+    kvp::{Annotation, Label, Labels},
     logging::controller::ReconcilerError,
     memory::{BinaryMultiple, MemoryQuantity},
     product_config_utils::{
@@ -68,11 +69,10 @@ use stackable_trino_crd::{
     Container, TrinoCluster, TrinoClusterStatus, TrinoConfig, TrinoRole, ACCESS_CONTROL_PROPERTIES,
     APP_NAME, CONFIG_DIR_NAME, CONFIG_PROPERTIES, DATA_DIR_NAME, DISCOVERY_URI,
     ENV_INTERNAL_SECRET, HTTPS_PORT, HTTPS_PORT_NAME, HTTP_PORT, HTTP_PORT_NAME, JVM_CONFIG,
-    JVM_HEAP_FACTOR, JVM_SECURITY_PROPERTIES, LOG_COMPRESSION, LOG_FORMAT, LOG_MAX_SIZE,
-    LOG_MAX_TOTAL_SIZE, LOG_PATH, LOG_PROPERTIES, METRICS_PORT, METRICS_PORT_NAME, NODE_PROPERTIES,
-    RW_CONFIG_DIR_NAME, STACKABLE_CLIENT_TLS_DIR, STACKABLE_INTERNAL_TLS_DIR,
-    STACKABLE_MOUNT_INTERNAL_TLS_DIR, STACKABLE_MOUNT_SERVER_TLS_DIR, STACKABLE_SERVER_TLS_DIR,
-    STACKABLE_TLS_STORE_PASSWORD,
+    JVM_SECURITY_PROPERTIES, LOG_COMPRESSION, LOG_FORMAT, LOG_MAX_SIZE, LOG_MAX_TOTAL_SIZE,
+    LOG_PATH, LOG_PROPERTIES, METRICS_PORT, METRICS_PORT_NAME, NODE_PROPERTIES, RW_CONFIG_DIR_NAME,
+    STACKABLE_CLIENT_TLS_DIR, STACKABLE_INTERNAL_TLS_DIR, STACKABLE_MOUNT_INTERNAL_TLS_DIR,
+    STACKABLE_MOUNT_SERVER_TLS_DIR, STACKABLE_SERVER_TLS_DIR,
 };
 use strum::{EnumDiscriminants, IntoStaticStr};
 
@@ -80,7 +80,7 @@ use crate::{
     authentication::{TrinoAuthenticationConfig, TrinoAuthenticationTypes},
     authorization::opa::TrinoOpaConfig,
     catalog::{config::CatalogConfig, FromTrinoCatalogError},
-    command,
+    command, config,
     operations::{
         add_graceful_shutdown_config, graceful_shutdown_config_properties, pdb::add_pdbs,
     },
@@ -213,21 +213,6 @@ pub enum Error {
         catalog: ObjectRef<TrinoCatalog>,
     },
 
-    #[snafu(display("invalid memory resource configuration - missing default or value in crd?"))]
-    MissingMemoryResourceConfig,
-
-    #[snafu(display("could not convert / scale memory resource config to [{unit}]"))]
-    FailedToConvertMemoryResourceConfig {
-        source: stackable_operator::error::Error,
-        unit: String,
-    },
-
-    #[snafu(display("failed to convert java heap config to unit [{unit}]"))]
-    FailedToConvertMemoryResourceConfigToJavaHeap {
-        source: stackable_operator::error::Error,
-        unit: String,
-    },
-
     #[snafu(display("illegal container name: [{container_name}]"))]
     IllegalContainerName {
         source: stackable_operator::error::Error,
@@ -303,6 +288,35 @@ pub enum Error {
     GracefulShutdown {
         source: crate::operations::graceful_shutdown::Error,
     },
+
+    #[snafu(display("failed to get required Labels"))]
+    GetRequiredLabels {
+        source:
+            stackable_operator::kvp::KeyValuePairError<stackable_operator::kvp::LabelValueError>,
+    },
+
+    #[snafu(display("failed to build Labels"))]
+    LabelBuild {
+        source: stackable_operator::kvp::LabelError,
+    },
+
+    #[snafu(display("failed to build Annotation"))]
+    AnnotationBuild {
+        source: stackable_operator::kvp::KeyValuePairError<Infallible>,
+    },
+
+    #[snafu(display("failed to build Metadata"))]
+    MetadataBuild {
+        source: stackable_operator::builder::ObjectMetaBuilderError,
+    },
+
+    #[snafu(display("failed to build TLS certificate SecretClass Volume"))]
+    TlsCertSecretClassVolumeBuild {
+        source: stackable_operator::builder::SecretOperatorVolumeSourceBuilderError,
+    },
+
+    #[snafu(display("failed to build JVM config"))]
+    FailedToCreateJvmConfig { source: crate::config::jvm::Error },
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -379,7 +393,9 @@ pub async fn reconcile_trino(trino: Arc<TrinoCluster>, ctx: Arc<Ctx>) -> Result<
     let (rbac_sa, rbac_rolebinding) = build_rbac_resources(
         trino.as_ref(),
         APP_NAME,
-        cluster_resources.get_required_labels(),
+        cluster_resources
+            .get_required_labels()
+            .context(GetRequiredLabelsSnafu)?,
     )
     .context(BuildRbacResourcesSnafu)?;
 
@@ -543,10 +559,15 @@ pub fn build_coordinator_role_service(
                 &role_name,
                 "global",
             ))
+            .context(MetadataBuildSnafu)?
             .build(),
         spec: Some(ServiceSpec {
             ports: Some(service_ports(trino)),
-            selector: Some(role_selector_labels(trino, APP_NAME, &role_name)),
+            selector: Some(
+                Labels::role_selector(trino, APP_NAME, &role_name)
+                    .context(LabelBuildSnafu)?
+                    .into(),
+            ),
             type_: Some(trino.spec.cluster_config.listener_class.k8s_service_type()),
             ..ServiceSpec::default()
         }),
@@ -569,50 +590,9 @@ fn build_rolegroup_config_map(
 ) -> Result<ConfigMap> {
     let mut cm_conf_data = BTreeMap::new();
 
-    let memory_unit = BinaryMultiple::Mebi;
-    let heap_size = MemoryQuantity::try_from(
-        merged_config
-            .resources
-            .memory
-            .limit
-            .as_ref()
-            .context(MissingMemoryResourceConfigSnafu)?,
-    )
-    .context(FailedToConvertMemoryResourceConfigSnafu {
-        unit: memory_unit.to_java_memory_unit(),
-    })?
-    .scale_to(memory_unit)
-        * JVM_HEAP_FACTOR;
-
-    // TODO: create via product config?
-    // from https://trino.io/docs/current/installation/deployment.html#jvm-config
-    let mut jvm_config = formatdoc!(
-        "-server
-        -Xms{heap}
-        -Xmx{heap}
-        -XX:-UseBiasedLocking
-        -XX:+UseG1GC
-        -XX:G1HeapRegionSize=32M
-        -XX:+ExplicitGCInvokesConcurrent
-        -XX:+ExitOnOutOfMemoryError
-        -XX:+HeapDumpOnOutOfMemoryError
-        -XX:-OmitStackTraceInFastThrow
-        -XX:ReservedCodeCacheSize=512M
-        -XX:PerMethodRecompilationCutoff=10000
-        -XX:PerBytecodeRecompilationCutoff=10000
-        -Djdk.attach.allowAttachSelf=true
-        -Djdk.nio.maxCachedBufferSize=2000000
-        -Djavax.net.ssl.trustStore={STACKABLE_CLIENT_TLS_DIR}/truststore.p12
-        -Djavax.net.ssl.trustStorePassword={STACKABLE_TLS_STORE_PASSWORD}
-        -Djavax.net.ssl.trustStoreType=pkcs12
-        -Djava.security.properties={RW_CONFIG_DIR_NAME}/{JVM_SECURITY_PROPERTIES}
-        ",
-        heap = heap_size.format_for_java().context(
-            FailedToConvertMemoryResourceConfigToJavaHeapSnafu {
-                unit: memory_unit.to_java_memory_unit(),
-            }
-        )?
-    );
+    // retrieve JVM config - TODO: currently not overridable
+    let mut jvm_config = config::jvm::jvm_config(resolved_product_image, role, merged_config)
+        .context(FailedToCreateJvmConfigSnafu)?;
 
     // TODO: we support only one coordinator for now
     let coordinator_ref: TrinoPodRef = trino
@@ -786,6 +766,7 @@ fn build_rolegroup_config_map(
                     &rolegroup_ref.role,
                     &rolegroup_ref.role_group,
                 ))
+                .context(MetadataBuildSnafu)?
                 .build(),
         )
         .data(cm_conf_data)
@@ -816,6 +797,7 @@ fn build_rolegroup_catalog_config_map(
                     &rolegroup_ref.role,
                     &rolegroup_ref.role_group,
                 ))
+                .context(MetadataBuildSnafu)?
                 .build(),
         )
         .data(
@@ -829,6 +811,10 @@ fn build_rolegroup_catalog_config_map(
                         .collect::<Vec<_>>();
                     Ok((
                         format!("{}.properties", catalog.name),
+                        // false positive https://github.com/rust-lang/rust-clippy/issues/9280
+                        // we need the tuple (&String, &Option<String>) which the extra map is doing.
+                        // Removing the map changes the type to &(String, Option<String>)
+                        #[allow(clippy::map_identity)]
                         product_config::writer::to_java_properties_string(
                             catalog_props.iter().map(|(k, v)| (k, v)),
                         )
@@ -1043,17 +1029,23 @@ fn build_rolegroup_statefulset(
         ));
     }
 
-    pod_builder
-        .metadata_builder(|m| {
-            m.with_recommended_labels(build_recommended_labels(
-                trino,
-                &resolved_product_image.app_version_label,
-                &rolegroup_ref.role,
-                &rolegroup_ref.role_group,
-            ));
+    let metadata = ObjectMetaBuilder::new()
+        .with_recommended_labels(build_recommended_labels(
+            trino,
+            &resolved_product_image.app_version_label,
+            &rolegroup_ref.role,
+            &rolegroup_ref.role_group,
+        ))
+        .context(MetadataBuildSnafu)?
+        .with_annotation(
             // This is actually used by some kuttl tests (as they don't specify the container explicitly)
-            m.with_annotation("kubectl.kubernetes.io/default-container", "trino")
-        })
+            Annotation::try_from(("kubectl.kubernetes.io/default-container", "trino"))
+                .context(AnnotationBuildSnafu)?,
+        )
+        .build();
+
+    pod_builder
+        .metadata(metadata)
         .image_pull_secrets_from_product_image(resolved_product_image)
         .affinity(&merged_config.affinity)
         .add_init_container(container_prepare)
@@ -1105,17 +1097,22 @@ fn build_rolegroup_statefulset(
                 &rolegroup_ref.role,
                 &rolegroup_ref.role_group,
             ))
+            .context(MetadataBuildSnafu)?
             .build(),
         spec: Some(StatefulSetSpec {
             pod_management_policy: Some("Parallel".to_string()),
             replicas: rolegroup.replicas.map(i32::from),
             selector: LabelSelector {
-                match_labels: Some(role_group_selector_labels(
-                    trino,
-                    APP_NAME,
-                    &rolegroup_ref.role,
-                    &rolegroup_ref.role_group,
-                )),
+                match_labels: Some(
+                    Labels::role_group_selector(
+                        trino,
+                        APP_NAME,
+                        &rolegroup_ref.role,
+                        &rolegroup_ref.role_group,
+                    )
+                    .context(LabelBuildSnafu)?
+                    .into(),
+                ),
                 ..LabelSelector::default()
             },
             service_name: rolegroup_ref.object_name(),
@@ -1151,19 +1148,24 @@ fn build_rolegroup_service(
                 &rolegroup_ref.role,
                 &rolegroup_ref.role_group,
             ))
-            .with_label("prometheus.io/scrape", "true")
+            .context(MetadataBuildSnafu)?
+            .with_label(Label::try_from(("prometheus.io/scrape", "true")).context(LabelBuildSnafu)?)
             .build(),
         spec: Some(ServiceSpec {
             // Internal communication does not need to be exposed
             type_: Some("ClusterIP".to_string()),
             cluster_ip: Some("None".to_string()),
             ports: Some(service_ports(trino)),
-            selector: Some(role_group_selector_labels(
-                trino,
-                APP_NAME,
-                &rolegroup_ref.role,
-                &rolegroup_ref.role_group,
-            )),
+            selector: Some(
+                Labels::role_group_selector(
+                    trino,
+                    APP_NAME,
+                    &rolegroup_ref.role,
+                    &rolegroup_ref.role_group,
+                )
+                .context(LabelBuildSnafu)?
+                .into(),
+            ),
             publish_not_ready_addresses: Some(true),
             ..ServiceSpec::default()
         }),
@@ -1414,16 +1416,17 @@ fn liveness_probe(trino: &TrinoCluster) -> Probe {
     }
 }
 
-fn create_tls_volume(volume_name: &str, tls_secret_class: &str) -> Volume {
-    VolumeBuilder::new(volume_name)
+fn create_tls_volume(volume_name: &str, tls_secret_class: &str) -> Result<Volume> {
+    Ok(VolumeBuilder::new(volume_name)
         .ephemeral(
             SecretOperatorVolumeSourceBuilder::new(tls_secret_class)
                 .with_pod_scope()
                 .with_node_scope()
                 .with_format(SecretFormat::TlsPkcs12)
-                .build(),
+                .build()
+                .context(TlsCertSecretClassVolumeBuildSnafu)?,
         )
-        .build()
+        .build())
 }
 
 fn tls_volume_mounts(
@@ -1436,7 +1439,7 @@ fn tls_volume_mounts(
     if let Some(server_tls) = trino.get_server_tls() {
         cb_prepare.add_volume_mount("server-tls-mount", STACKABLE_MOUNT_SERVER_TLS_DIR);
         cb_trino.add_volume_mount("server-tls-mount", STACKABLE_MOUNT_SERVER_TLS_DIR);
-        pod_builder.add_volume(create_tls_volume("server-tls-mount", server_tls));
+        pod_builder.add_volume(create_tls_volume("server-tls-mount", server_tls)?);
     }
 
     cb_prepare.add_volume_mount("server-tls", STACKABLE_SERVER_TLS_DIR);
@@ -1450,7 +1453,7 @@ fn tls_volume_mounts(
     if let Some(internal_tls) = trino.get_internal_tls() {
         cb_prepare.add_volume_mount("internal-tls-mount", STACKABLE_MOUNT_INTERNAL_TLS_DIR);
         cb_trino.add_volume_mount("internal-tls-mount", STACKABLE_MOUNT_INTERNAL_TLS_DIR);
-        pod_builder.add_volume(create_tls_volume("internal-tls-mount", internal_tls));
+        pod_builder.add_volume(create_tls_volume("internal-tls-mount", internal_tls)?);
 
         cb_prepare.add_volume_mount("internal-tls", STACKABLE_INTERNAL_TLS_DIR);
         cb_trino.add_volume_mount("internal-tls", STACKABLE_INTERNAL_TLS_DIR);

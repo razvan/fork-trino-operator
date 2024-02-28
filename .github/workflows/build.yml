@@ -390,7 +390,8 @@ jobs:
             distribution: openshift,
             version: 4.14.0-okd,
             nodes: 3,
-            instances: r1.2xlarge
+            instances: r1.large
+            api-token: ${{ secrets.REPLICATED_API_TOKEN }}
           }]
     runs-on: ubuntu-22.04
     steps:

@@ -433,7 +433,7 @@ jobs:
         run: |
           PATH=/usr/bin:$PATH
 
-          scripts/run_tests.sh openshift
+          scripts/run_tests.sh --test-suite openshift --parallel 2
 
       - name: Remove Cluster
         if: always()
